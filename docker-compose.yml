@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  qloapps:
+    build: .
+    container_name: qloapps_web
+    ports:
+      - "8080:80"
+    volumes:
+      - .:/var/www/html
+      - ./docker/uploads:/var/www/html/upload
+      - ./docker/cache:/var/www/html/cache
+      - ./docker/logs:/var/www/html/log
+    environment:
+      - APACHE_DOCUMENT_ROOT=/var/www/html
+    depends_on:
+      - mysql
+    networks:
+      - qloapps_network
+
+  mysql:
+    image: mysql:8.0
+    container_name: qloapps_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: qloapps_root
+      MYSQL_DATABASE: qloapps
+      MYSQL_USER: qloapps_user
+      MYSQL_PASSWORD: qloapps_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d
+    command: --default-authentication-plugin=mysql_native_password
+    networks:
+      - qloapps_network
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: qloapps_phpmyadmin
+    restart: always
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: qloapps_root
+    depends_on:
+      - mysql
+    networks:
+      - qloapps_network
+
+volumes:
+  mysql_data:
+
+networks:
+  qloapps_network:
+    driver: bridge
