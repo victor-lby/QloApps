@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "name": "New Hook Documentation",
+  "description": "Monitors for new hook registrations and automatically creates or updates documentation including README updates, usage examples, and test prompts",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "classes/Hook.php",
+      "classes/module/Module.php",
+      "install/upgrade/sql/ps_hook.sql",
+      "modules/*/**.php"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A new hook has been registered in the QloApps system. Please:\n\n1. **Update README.md** - Add documentation for the new hook including:\n   - Hook name and purpose\n   - When it's triggered\n   - Available parameters\n   - Usage example in a module\n   - Integration with hotel booking system\n\n2. **Create usage examples** - Show how to:\n   - Register the hook in a module\n   - Implement the hook handler\n   - Use hook parameters effectively\n   - Handle hotel-specific data (bookings, rooms, customers)\n\n3. **Suggest test scenarios** - Recommend tests for:\n   - Hook registration verification\n   - Parameter validation\n   - Integration with existing hotel modules\n   - Performance impact assessment\n\nFocus on hotel management context and provide practical examples for booking system, room management, and guest services integration."
+  }
+}

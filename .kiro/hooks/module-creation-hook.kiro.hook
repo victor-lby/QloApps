@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "name": "Module Creation Assistant",
+  "description": "Automatically generates module scaffolding including lifecycle hooks, display hooks, and placeholder methods when a new module folder or main PHP file is created",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "modules/*/",
+      "modules/*/*.php"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A new module has been detected. Please analyze the module structure and generate the following:\n\n1. **Module Lifecycle Methods**: Generate stubbed install(), uninstall(), enable(), disable() methods with proper return statements and basic error handling\n\n2. **Hook Registrations**: Pre-populate registerHook() calls for common hotel management hooks like:\n   - displayHeader, displayFooter\n   - actionBookingCreate, actionBookingUpdate\n   - displayRoomDetails, displayBookingForm\n   - actionCustomerAccountAdd\n   - displayAdminOrder\n\n3. **Hook Implementation Methods**: Create placeholder hook methods with proper naming convention (hookDisplayHeader, hookActionValidateOrder, etc.) including:\n   - Parameter validation comments\n   - Return value examples\n   - Common use case comments\n\n4. **Configuration Methods**: Add getContent() method for module configuration with basic form structure\n\n5. **Database Methods**: Add createTables() and dropTables() placeholder methods for database operations\n\n6. **Module Metadata**: Ensure proper module constructor with name, version, author, description, and compatibility settings\n\nPlease generate clean, well-commented PHP code following QloApps module development standards and include proper error handling and validation patterns."
+  }
+}

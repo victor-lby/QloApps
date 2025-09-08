@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "name": "PHP Module Linter",
+  "description": "Automatically runs PHP-CS-Fixer for code formatting, validates hook implementations and template block names, and suggests missing translations or Smarty security best practices when .php or .tpl files are saved within modules",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "modules/**/*.php",
+      "modules/**/*.tpl"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A PHP or TPL file has been modified in a QloApps module. Please:\n\n1. **Run PHP-CS-Fixer**: Format the code according to QloApps/PrestaShop coding standards\n2. **Validate Hook Implementations**: \n   - Check if hook methods follow proper naming (hookActionX, hookDisplayX)\n   - Verify hook registration in install() method\n   - Ensure proper parameter handling and return values\n3. **Validate Template Block Names**: \n   - Check Smarty template syntax and block structure\n   - Verify proper variable escaping and security\n   - Validate template inheritance and includes\n4. **Suggest Missing Translations**:\n   - Identify hardcoded strings that should use $this->l() method\n   - Check for missing translation keys in module translations\n   - Suggest proper multilingual implementation\n5. **Smarty Security Best Practices**:\n   - Verify proper variable escaping ({$var|escape:'html':'UTF-8'})\n   - Check for potential XSS vulnerabilities\n   - Validate file inclusion security\n   - Ensure proper CSRF token usage in forms\n\nFocus on QloApps hotel management context - check for proper booking, room, and hotel-related implementations. Provide specific code suggestions and security improvements."
+  }
+}
