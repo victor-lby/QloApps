@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>qlochannelmanagerconnector</name>
+	<displayName><![CDATA[Channel Manager Connector]]></displayName>
+	<version><![CDATA[1.0.1]]></version>
+	<description><![CDATA[This module checks connection with channel manager and create logs for the bookings sent from channel manager.]]></description>
+	<author><![CDATA[Webkul]]></author>
+	<tab><![CDATA[analytics_stats]]></tab>
+	<confirmUninstall><![CDATA[]]></confirmUninstall>
+	<is_configurable>0</is_configurable>
+	<need_instance>1</need_instance>
+	<limited_countries></limited_countries>
+</module>

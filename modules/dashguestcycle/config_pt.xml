@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>dashguestcycle</name>
+	<displayName><![CDATA[Ciclo de convidados do painel]]></displayName>
+	<version><![CDATA[1.0.3]]></version>
+	<description><![CDATA[Adiciona um bloco com uma representa&ccedil;&atilde;o gr&aacute;fica das estat&iacute;sticas do ciclo do convidado.]]></description>
+	<author><![CDATA[Webkul]]></author>
+	<tab><![CDATA[dashboard]]></tab>
+	<confirmUninstall><![CDATA[Você tem certeza que quer desinstalar?]]></confirmUninstall>
+	<is_configurable>0</is_configurable>
+	<need_instance>1</need_instance>
+	<limited_countries></limited_countries>
+</module>

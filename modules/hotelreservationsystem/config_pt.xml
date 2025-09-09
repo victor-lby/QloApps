@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>hotelreservationsystem</name>
+	<displayName><![CDATA[Hotel Booking and Reservation System]]></displayName>
+	<version><![CDATA[1.7.0]]></version>
+	<description><![CDATA[This module is the backbone of QloApps and handles all booking processes on your website.]]></description>
+	<author><![CDATA[Webkul]]></author>
+	<tab><![CDATA[administration]]></tab>
+	<confirmUninstall><![CDATA[This module should not be uninstalled under any circumstances. Doing so may cause undesired results.]]></confirmUninstall>
+	<is_configurable>0</is_configurable>
+	<need_instance>0</need_instance>
+	<limited_countries></limited_countries>
+</module>

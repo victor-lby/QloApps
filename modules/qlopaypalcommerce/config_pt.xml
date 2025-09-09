@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>qlopaypalcommerce</name>
+	<displayName><![CDATA[QloApps PayPal Checkout]]></displayName>
+	<version><![CDATA[1.0.5]]></version>
+	<description><![CDATA[&lt;b&gt;An instant global business.&lt;/b&gt;&lt;br&gt;One integration for all your online payment needs.&lt;br&gt;&lt;b&gt;Benefits&lt;/b&gt;&lt;ul&gt;&lt;li&gt;Enable a seamless buying experience for your customers that drives conversion and loyalty.&lt;/li&gt;&lt;li&gt;Accept PayPal payments with simplified onboarding, adaptable integration and easy account setup.&lt;/li&gt;&lt;li&gt;Access to 377M+ PayPal customers around the globe*, with local currency support for better money management.&lt;/li&gt;&lt;li&gt;Peace of mind for you and your customers with buyer and seller protection on eligible sales.&lt;/li&gt;&lt;/ul&gt;*PayPal Fourth Quarters 2020 Result]]></description>
+	<author><![CDATA[Webkul]]></author>
+	<tab><![CDATA[payments_gateways]]></tab>
+	<confirmUninstall><![CDATA[]]></confirmUninstall>
+	<is_configurable>1</is_configurable>
+	<need_instance>1</need_instance>
+	<limited_countries></limited_countries>
+</module>
