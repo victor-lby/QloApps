@@ -1,0 +1,26 @@
+# Admin .htaccess for QloApps
+# Enable URL rewriting for admin area
+
+<IfModule mod_rewrite.c>
+<IfModule mod_env.c>
+SetEnv HTTP_MOD_REWRITE On
+</IfModule>
+
+RewriteEngine On
+
+# Set the RewriteBase for the admin directory
+RewriteBase /admin/
+
+# Dispatcher - redirect all requests to index.php unless they are existing files/directories
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_URI} !^/admin/(css|js|img|themes)/
+RewriteRule ^(.*)$ index.php [QSA,L]
+
+</IfModule>
+
+# Security - Prevent access to sensitive files
+<FilesMatch "\.(tpl|sql|log|tpl)$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
