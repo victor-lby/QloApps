@@ -52,23 +52,173 @@ class SecurityAuditUtils
         $content = file_get_contents($file_path);
         $lines = explode("\n", $content);
 
-        // Patterns that indicate potential SQL injection
+        // Enhanced patterns for SQL injection detection
         $patterns = array(
-            '/\$_GET\[.*?\].*?SELECT/i' => 'Direct GET parameter in SQL query',
-            '/\$_POST\[.*?\].*?SELECT/i' => 'Direct POST parameter in SQL query',
-            '/\$_REQUEST\[.*?\].*?SELECT/i' => 'Direct REQUEST parameter in SQL query',
-            '/SELECT.*?\$_GET/i' => 'GET parameter concatenated in SQL',
-            '/SELECT.*?\$_POST/i' => 'POST parameter concatenated in SQL',
-            '/INSERT.*?\$_GET/i' => 'GET parameter in INSERT statement',
-            '/UPDATE.*?\$_GET/i' => 'GET parameter in UPDATE statement',
-            '/DELETE.*?\$_GET/i' => 'GET parameter in DELETE statement',
-            '/mysql_query\(.*?\$_/i' => 'Direct user input in mysql_query',
-            '/mysqli_query\(.*?\$_/i' => 'Direct user input in mysqli_query'
+            // Direct user input in SQL queries
+            '/\$_GET\[.*?\].*?(SELECT|INSERT|UPDATE|DELETE)/i' => 'Direct GET parameter in SQL query',
+            '/\$_POST\[.*?\].*?(SELECT|INSERT|UPDATE|DELETE)/i' => 'Direct POST parameter in SQL query',
+            '/\$_REQUEST\[.*?\].*?(SELECT|INSERT|UPDATE|DELETE)/i' => 'Direct REQUEST parameter in SQL query',
+            '/\$_COOKIE\[.*?\].*?(SELECT|INSERT|UPDATE|DELETE)/i' => 'Direct COOKIE parameter in SQL query',
+            
+            // SQL queries with user input concatenation
+            '/(SELECT|INSERT|UPDATE|DELETE).*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input concatenated in SQL query',
+            '/WHERE.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in WHERE clause without sanitization',
+            '/ORDER BY.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in ORDER BY clause',
+            '/GROUP BY.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in GROUP BY clause',
+            '/HAVING.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in HAVING clause',
+            '/LIMIT.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in LIMIT clause',
+            
+            // Tools::getValue without proper sanitization
+            '/WHERE.*?Tools::getValue\([^)]+\)(?!\s*\))/i' => 'Tools::getValue in WHERE clause without type casting',
+            '/(SELECT|INSERT|UPDATE|DELETE).*?Tools::getValue\([^)]+\).*?[\'"].*?[\'"].*?\./i' => 'Tools::getValue concatenated in SQL string',
+            
+            // Direct database functions with user input
+            '/mysql_query\(.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'Direct user input in mysql_query',
+            '/mysqli_query\(.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'Direct user input in mysqli_query',
+            '/pg_query\(.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'Direct user input in pg_query',
+            
+            // String concatenation in SQL
+            '/[\'"].*?(SELECT|INSERT|UPDATE|DELETE).*?[\'"].*?\.\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'String concatenation with user input in SQL',
+            '/\$sql.*?=.*?[\'"].*?\.\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'SQL variable with concatenated user input',
+            
+            // Unsafe use of sprintf/printf in SQL
+            '/sprintf\s*\(\s*[\'"].*?(SELECT|INSERT|UPDATE|DELETE).*?%s.*?[\'"].*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'Unsafe sprintf with user input in SQL',
+            
+            // Dynamic table/column names from user input
+            '/FROM\s+[\'"]?\s*\.\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'Dynamic table name from user input',
+            '/`?\s*\.\s*\$_(GET|POST|REQUEST|COOKIE).*?`?\s*=/i' => 'Dynamic column name from user input',
+            
+            // LIKE queries without proper escaping
+            '/LIKE\s+[\'"]%.*?\$_(GET|POST|REQUEST|COOKIE).*?%[\'"](?!.*pSQL)/i' => 'LIKE query with unescaped user input',
+            
+            // IN clauses with user input
+            '/IN\s*\(\s*[\'"]?\s*\.\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'IN clause with user input',
+            
+            // Union-based injection patterns
+            '/UNION.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'UNION query with user input'
         );
 
         foreach ($lines as $line_number => $line) {
+            $line_trimmed = trim($line);
+            
+            // Skip comments and empty lines
+            if (empty($line_trimmed) || strpos($line_trimmed, '//') === 0 || strpos($line_trimmed, '#') === 0 || strpos($line_trimmed, '/*') === 0) {
+                continue;
+            }
+
             foreach ($patterns as $pattern => $description) {
                 if (preg_match($pattern, $line)) {
+                    // Check if the line has proper sanitization
+                    $has_sanitization = self::checkSQLSanitization($line, $line_number, $lines);
+                    
+                    if (!$has_sanitization) {
+                        $severity = self::assessSQLInjectionSeverity($line, $pattern);
+                        
+                        $vulnerabilities[] = array(
+                            'line' => $line_number + 1,
+                            'code' => trim($line),
+                            'description' => $description,
+                            'severity' => $severity,
+                            'pattern_matched' => $pattern
+                        );
+                    }
+                }
+            }
+            
+            // Additional check for ObjectModel queries
+            $objectmodel_vulns = self::checkObjectModelQueries($line, $line_number);
+            if (!empty($objectmodel_vulns)) {
+                $vulnerabilities = array_merge($vulnerabilities, $objectmodel_vulns);
+            }
+        }
+
+        return $vulnerabilities;
+    }
+
+    /**
+     * Check if SQL line has proper sanitization
+     */
+    private static function checkSQLSanitization($line, $line_number, $lines)
+    {
+        // Check for proper type casting
+        if (preg_match('/\(int\)/', $line) || preg_match('/intval\(/', $line)) {
+            return true;
+        }
+        
+        // Check for pSQL function
+        if (preg_match('/pSQL\(/', $line)) {
+            return true;
+        }
+        
+        // Check for bqSQL function (for identifiers)
+        if (preg_match('/bqSQL\(/', $line)) {
+            return true;
+        }
+        
+        // Check for prepared statements in context
+        $context_start = max(0, $line_number - 3);
+        $context_end = min(count($lines), $line_number + 3);
+        
+        for ($i = $context_start; $i < $context_end; $i++) {
+            if (preg_match('/prepare\(|bindParam\(|bindValue\(|execute\(\s*array\(/i', $lines[$i])) {
+                return true;
+            }
+        }
+        
+        // Check for Validate class usage
+        if (preg_match('/Validate::(isInt|isUnsignedId|isCleanHtml|isGenericName)/', $line)) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Assess SQL injection severity based on context
+     */
+    private static function assessSQLInjectionSeverity($line, $pattern)
+    {
+        // Critical severity for admin operations
+        if (preg_match('/admin|employee|password|user/i', $line)) {
+            return SecurityAudit::SEVERITY_CRITICAL;
+        }
+        
+        // High severity for data modification
+        if (preg_match('/(INSERT|UPDATE|DELETE)/i', $line)) {
+            return SecurityAudit::SEVERITY_HIGH;
+        }
+        
+        // High severity for authentication bypass patterns
+        if (preg_match('/WHERE.*?(login|password|email).*?=/i', $line)) {
+            return SecurityAudit::SEVERITY_HIGH;
+        }
+        
+        // Medium severity for SELECT queries
+        if (preg_match('/SELECT/i', $line)) {
+            return SecurityAudit::SEVERITY_MEDIUM;
+        }
+        
+        return SecurityAudit::SEVERITY_HIGH; // Default to high for SQL injection
+    }
+
+    /**
+     * Check ObjectModel queries for vulnerabilities
+     */
+    private static function checkObjectModelQueries($line, $line_number)
+    {
+        $vulnerabilities = array();
+        
+        // Check for unsafe ObjectModel usage
+        $patterns = array(
+            '/new\s+\w+\(\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'ObjectModel instantiated with user input',
+            '/->load\(\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'ObjectModel load() with user input',
+            '/::getCollection\(\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'ObjectModel getCollection() with user input'
+        );
+        
+        foreach ($patterns as $pattern => $description) {
+            if (preg_match($pattern, $line)) {
+                // Check if there's proper validation
+                if (!preg_match('/\(int\)|intval\(|Validate::isUnsignedId/', $line)) {
                     $vulnerabilities[] = array(
                         'line' => $line_number + 1,
                         'code' => trim($line),
@@ -78,7 +228,7 @@ class SecurityAuditUtils
                 }
             }
         }
-
+        
         return $vulnerabilities;
     }
 
@@ -95,31 +245,221 @@ class SecurityAuditUtils
 
         $content = file_get_contents($file_path);
         $lines = explode("\n", $content);
+        $file_extension = pathinfo($file_path, PATHINFO_EXTENSION);
 
-        // Patterns that indicate potential XSS
-        $patterns = array(
-            '/echo\s+\$_GET/i' => 'Direct output of GET parameter',
-            '/echo\s+\$_POST/i' => 'Direct output of POST parameter',
-            '/print\s+\$_GET/i' => 'Direct print of GET parameter',
-            '/print\s+\$_POST/i' => 'Direct print of POST parameter',
-            '/\{\$smarty\.get\./i' => 'Direct Smarty GET output',
-            '/\{\$smarty\.post\./i' => 'Direct Smarty POST output',
-            '/innerHTML.*?\$_/i' => 'Direct user input to innerHTML'
+        // Enhanced patterns for XSS detection
+        $php_patterns = array(
+            // Direct output without encoding
+            '/echo\s+\$_(GET|POST|REQUEST|COOKIE|SESSION)/i' => 'Direct output of user input without encoding',
+            '/print\s+\$_(GET|POST|REQUEST|COOKIE|SESSION)/i' => 'Direct print of user input without encoding',
+            '/printf?\s*\(\s*[\'"].*?%s.*?[\'"].*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'Printf with user input without encoding',
+            
+            // Tools::getValue without encoding
+            '/echo\s+Tools::getValue\(/i' => 'Direct output of Tools::getValue without encoding',
+            '/print\s+Tools::getValue\(/i' => 'Direct print of Tools::getValue without encoding',
+            
+            // HTML attributes with user input
+            '/value\s*=\s*[\'"]?\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in HTML attribute without encoding',
+            '/href\s*=\s*[\'"]?\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in href attribute without encoding',
+            '/src\s*=\s*[\'"]?\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in src attribute without encoding',
+            '/onclick\s*=\s*[\'"].*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in onclick attribute',
+            '/onload\s*=\s*[\'"].*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in onload attribute',
+            '/style\s*=\s*[\'"].*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in style attribute',
+            
+            // JavaScript context
+            '/innerHTML\s*=.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input assigned to innerHTML',
+            '/document\.write\(.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in document.write',
+            '/eval\(.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in eval function',
+            
+            // URL context
+            '/header\s*\(\s*[\'"]Location:.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in redirect header',
+            '/window\.location.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in window.location',
+            
+            // Form context
+            '/<input.*?value\s*=\s*[\'"]?\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in form input value',
+            '/<textarea.*?>\s*\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input in textarea content',
+            
+            // Content-Type header issues
+            '/header\s*\(\s*[\'"]Content-Type:.*?text\/html.*?\$_(GET|POST|REQUEST|COOKIE)/i' => 'User input affecting Content-Type header'
+        );
+
+        $template_patterns = array(
+            // Smarty template vulnerabilities
+            '/\{\$smarty\.(get|post|request|cookie)\./i' => 'Direct Smarty superglobal output without escaping',
+            '/\{\$_(GET|POST|REQUEST|COOKIE|SESSION)\[/i' => 'Direct superglobal output in template',
+            '/\{\$[^}]*\}(?!.*\|escape)/i' => 'Template variable without escape modifier',
+            '/\{[^}]*Tools::getValue[^}]*\}(?!.*\|escape)/i' => 'Tools::getValue in template without escaping',
+            
+            // JavaScript in templates
+            '/var\s+\w+\s*=\s*[\'"]?\{\$[^}]*\}[\'"]?(?!.*\|escape)/i' => 'Template variable in JavaScript without escaping',
+            '/onclick\s*=\s*[\'"][^\'\"]*\{\$[^}]*\}/i' => 'Template variable in onclick attribute',
+            '/href\s*=\s*[\'"]javascript:[^\'\"]*\{\$[^}]*\}/i' => 'Template variable in javascript: URL',
+            
+            // CSS context
+            '/style\s*=\s*[\'"][^\'\"]*\{\$[^}]*\}/i' => 'Template variable in style attribute',
+            
+            // HTML context
+            '/<script[^>]*>\s*[^<]*\{\$[^}]*\}(?!.*\|escape)/i' => 'Template variable in script tag without escaping',
+            '/<title[^>]*>[^<]*\{\$[^}]*\}(?!.*\|escape)/i' => 'Template variable in title tag without escaping'
         );
 
         foreach ($lines as $line_number => $line) {
+            $line_trimmed = trim($line);
+            
+            // Skip comments and empty lines
+            if (empty($line_trimmed) || strpos($line_trimmed, '//') === 0 || strpos($line_trimmed, '#') === 0) {
+                continue;
+            }
+
+            // Choose patterns based on file type
+            $patterns = ($file_extension === 'tpl') ? $template_patterns : $php_patterns;
+            
             foreach ($patterns as $pattern => $description) {
                 if (preg_match($pattern, $line)) {
-                    $vulnerabilities[] = array(
-                        'line' => $line_number + 1,
-                        'code' => trim($line),
-                        'description' => $description,
-                        'severity' => SecurityAudit::SEVERITY_MEDIUM
-                    );
+                    // Check if proper encoding is used
+                    $has_encoding = self::checkXSSProtection($line, $line_number, $lines, $file_extension);
+                    $severity = self::assessXSSSeverity($line, $description, $file_extension);
+                    
+                    if (!$has_encoding) {
+                        $vulnerabilities[] = array(
+                            'line' => $line_number + 1,
+                            'code' => trim($line),
+                            'description' => $description,
+                            'severity' => $severity,
+                            'file_type' => $file_extension
+                        );
+                    }
                 }
+            }
+            
+            // Additional checks for specific contexts
+            $context_vulns = self::checkXSSContexts($line, $line_number, $file_extension);
+            if (!empty($context_vulns)) {
+                $vulnerabilities = array_merge($vulnerabilities, $context_vulns);
             }
         }
 
+        return $vulnerabilities;
+    }
+
+    /**
+     * Check if XSS protection is properly implemented
+     */
+    private static function checkXSSProtection($line, $line_number, $lines, $file_extension)
+    {
+        if ($file_extension === 'tpl') {
+            // Check for Smarty escape modifiers
+            $escape_patterns = array(
+                '/\|escape:\'html\'/', '/\|escape:\'htmlall\'/', '/\|escape:\'url\'/',
+                '/\|escape:\'quotes\'/', '/\|escape:\'javascript\'/', '/\|strip_tags/',
+                '/\|nl2br/', '/\|htmlspecialchars/'
+            );
+            
+            foreach ($escape_patterns as $pattern) {
+                if (preg_match($pattern, $line)) {
+                    return true;
+                }
+            }
+        } else {
+            // Check for PHP encoding functions
+            $encoding_functions = array(
+                'htmlspecialchars', 'htmlentities', 'Tools::safeOutput', 
+                'Tools::displayError', 'strip_tags', 'addslashes',
+                'json_encode', 'urlencode', 'rawurlencode'
+            );
+            
+            foreach ($encoding_functions as $func) {
+                if (stripos($line, $func) !== false) {
+                    return true;
+                }
+            }
+            
+            // Check for proper escaping in context
+            $context_start = max(0, $line_number - 3);
+            $context_end = min(count($lines), $line_number + 3);
+            
+            for ($i = $context_start; $i < $context_end; $i++) {
+                foreach ($encoding_functions as $func) {
+                    if (stripos($lines[$i], $func) !== false) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Assess XSS vulnerability severity
+     */
+    private static function assessXSSSeverity($line, $description, $file_extension)
+    {
+        // Critical severity for JavaScript context
+        if (preg_match('/eval|innerHTML|document\.write|javascript:/i', $line)) {
+            return SecurityAudit::SEVERITY_CRITICAL;
+        }
+        
+        // High severity for HTML attributes and headers
+        if (preg_match('/onclick|onload|href|src|Location:|window\.location/i', $line)) {
+            return SecurityAudit::SEVERITY_HIGH;
+        }
+        
+        // High severity for admin context
+        if (preg_match('/admin|employee/i', $line)) {
+            return SecurityAudit::SEVERITY_HIGH;
+        }
+        
+        // Medium severity for template variables without escaping
+        if ($file_extension === 'tpl' && preg_match('/\{\$[^}]*\}/i', $line)) {
+            return SecurityAudit::SEVERITY_MEDIUM;
+        }
+        
+        // Medium severity for direct output
+        if (preg_match('/echo|print/i', $line)) {
+            return SecurityAudit::SEVERITY_MEDIUM;
+        }
+        
+        return SecurityAudit::SEVERITY_MEDIUM; // Default severity
+    }
+
+    /**
+     * Check specific XSS contexts
+     */
+    private static function checkXSSContexts($line, $line_number, $file_extension)
+    {
+        $vulnerabilities = array();
+        
+        // Check for DOM-based XSS patterns
+        if (preg_match('/document\.location\.hash|window\.location\.hash|location\.search/i', $line)) {
+            $vulnerabilities[] = array(
+                'line' => $line_number + 1,
+                'code' => trim($line),
+                'description' => 'Potential DOM-based XSS using location properties',
+                'severity' => SecurityAudit::SEVERITY_HIGH
+            );
+        }
+        
+        // Check for reflected XSS in error messages
+        if (preg_match('/error.*?\$_(GET|POST|REQUEST)/i', $line)) {
+            $vulnerabilities[] = array(
+                'line' => $line_number + 1,
+                'code' => trim($line),
+                'description' => 'User input reflected in error message',
+                'severity' => SecurityAudit::SEVERITY_MEDIUM
+            );
+        }
+        
+        // Check for stored XSS potential
+        if (preg_match('/echo.*?\$[^_].*?->.*?(name|title|description|comment)/i', $line)) {
+            $vulnerabilities[] = array(
+                'line' => $line_number + 1,
+                'code' => trim($line),
+                'description' => 'Potential stored XSS in user-generated content',
+                'severity' => SecurityAudit::SEVERITY_HIGH
+            );
+        }
+        
         return $vulnerabilities;
     }
 
@@ -137,41 +477,200 @@ class SecurityAuditUtils
         $content = file_get_contents($file_path);
         $lines = explode("\n", $content);
 
-        // Patterns for file upload vulnerabilities
+        // Enhanced patterns for file upload vulnerabilities
         $patterns = array(
-            '/move_uploaded_file\(.*?\$_FILES.*?\)/i' => 'File upload without validation',
-            '/\$_FILES\[.*?\]\[\'name\'\].*?move_uploaded_file/i' => 'Using original filename',
-            '/copy\(\$_FILES/i' => 'Using copy() for file uploads',
-            '/file_put_contents\(.*?\$_FILES/i' => 'Direct file content writing'
+            // Direct file operations without validation
+            '/move_uploaded_file\(.*?\$_FILES.*?\)(?!.*pathinfo|.*getimagesize|.*mime_content_type)/i' => 'File upload without proper validation',
+            '/copy\(\s*\$_FILES\[.*?\]\[.*?\]/i' => 'Using copy() for file uploads (insecure)',
+            '/file_put_contents\(.*?\$_FILES\[.*?\]\[.*?\]/i' => 'Direct file content writing from upload',
+            '/rename\(.*?\$_FILES\[.*?\]\[.*?\]/i' => 'Direct file rename from upload',
+            
+            // Using original filename without sanitization
+            '/\$_FILES\[.*?\]\[\'name\'\](?!.*basename|.*pathinfo|.*preg_replace)/i' => 'Using original filename without sanitization',
+            '/\$filename\s*=\s*\$_FILES\[.*?\]\[\'name\'\]/i' => 'Direct assignment of uploaded filename',
+            
+            // Missing file type validation
+            '/\$_FILES\[.*?\]\[\'type\'\].*?==.*?[\'"]image/i' => 'Relying on client-provided MIME type',
+            '/if\s*\(\s*\$_FILES\[.*?\]\[\'type\'\]/i' => 'Trusting client-provided MIME type',
+            
+            // Dangerous file extensions not filtered
+            '/\.(php|phtml|php3|php4|php5|phar|exe|bat|cmd|com|scr|vbs|js|jar|war)[\'"]/i' => 'Allowing dangerous file extensions',
+            
+            // Missing size validation
+            '/move_uploaded_file\(.*?\)(?!.*\$_FILES\[.*?\]\[\'size\'\])/i' => 'File upload without size validation',
+            
+            // Insecure temporary file handling
+            '/tempnam\(.*?\).*?move_uploaded_file/i' => 'Insecure temporary file handling',
+            '/\$_FILES\[.*?\]\[\'tmp_name\'\].*?fopen/i' => 'Direct access to temporary file',
+            
+            // Path traversal vulnerabilities
+            '/\$_FILES\[.*?\]\[\'name\'\].*?\.\.\/|\.\.\\\/i' => 'Potential path traversal in filename',
+            '/basename\(\$_FILES\[.*?\]\[\'name\'\]\)(?!.*preg_replace)/i' => 'Using basename without further sanitization',
+            
+            // Missing upload directory security
+            '/move_uploaded_file\(.*?[\'"]\/.*?[\'"].*?\)/i' => 'Uploading to absolute path without validation',
+            '/\$upload_dir.*?=.*?[\'"].*?www.*?[\'"]|[\'"].*?public_html.*?[\'"]|[\'"].*?htdocs.*?[\'"])/i' => 'Uploading to web-accessible directory',
+            
+            // Executable file uploads
+            '/chmod\(.*?\$_FILES.*?0777|0755\)/i' => 'Setting executable permissions on uploaded files',
+            
+            // Missing error handling
+            '/move_uploaded_file\(.*?\)(?!.*if|.*\?)/i' => 'File upload without error handling',
+            
+            // Double extension vulnerabilities
+            '/\$_FILES\[.*?\]\[\'name\'\].*?\..*?\..*?$/i' => 'Potential double extension vulnerability',
+            
+            // Content-based validation missing
+            '/move_uploaded_file\(.*?\)(?!.*getimagesize|.*exif_imagetype|.*finfo_file)/i' => 'Missing content-based file validation'
         );
 
         foreach ($lines as $line_number => $line) {
+            $line_trimmed = trim($line);
+            
+            // Skip comments and empty lines
+            if (empty($line_trimmed) || strpos($line_trimmed, '//') === 0 || strpos($line_trimmed, '#') === 0) {
+                continue;
+            }
+
             foreach ($patterns as $pattern => $description) {
                 if (preg_match($pattern, $line)) {
-                    // Check if there's validation nearby
-                    $has_validation = false;
-                    $context_start = max(0, $line_number - 5);
-                    $context_end = min(count($lines), $line_number + 5);
+                    // Check for proper validation in context
+                    $has_validation = self::checkFileUploadValidation($line, $line_number, $lines);
+                    $severity = self::assessFileUploadSeverity($line, $description);
                     
-                    for ($i = $context_start; $i < $context_end; $i++) {
-                        if (preg_match('/(pathinfo|getimagesize|mime_content_type|finfo_file)/i', $lines[$i])) {
-                            $has_validation = true;
-                            break;
-                        }
-                    }
-
-                    if (!$has_validation) {
+                    if (!$has_validation || $severity >= SecurityAudit::SEVERITY_HIGH) {
                         $vulnerabilities[] = array(
                             'line' => $line_number + 1,
                             'code' => trim($line),
                             'description' => $description,
-                            'severity' => SecurityAudit::SEVERITY_HIGH
+                            'severity' => $severity,
+                            'validation_present' => $has_validation
                         );
                     }
                 }
             }
+            
+            // Check for specific file upload class vulnerabilities
+            $class_vulns = self::checkFileUploadClasses($line, $line_number);
+            if (!empty($class_vulns)) {
+                $vulnerabilities = array_merge($vulnerabilities, $class_vulns);
+            }
         }
 
+        return $vulnerabilities;
+    }
+
+    /**
+     * Check if file upload has proper validation
+     */
+    private static function checkFileUploadValidation($line, $line_number, $lines)
+    {
+        $validation_functions = array(
+            'pathinfo', 'getimagesize', 'mime_content_type', 'finfo_file', 
+            'exif_imagetype', 'is_uploaded_file', 'Validate::', 'ImageManager::',
+            'in_array', 'preg_match', 'basename', 'realpath'
+        );
+        
+        // Check current line for validation
+        foreach ($validation_functions as $func) {
+            if (stripos($line, $func) !== false) {
+                return true;
+            }
+        }
+        
+        // Check surrounding context (5 lines before and after)
+        $context_start = max(0, $line_number - 5);
+        $context_end = min(count($lines), $line_number + 5);
+        
+        for ($i = $context_start; $i < $context_end; $i++) {
+            foreach ($validation_functions as $func) {
+                if (stripos($lines[$i], $func) !== false) {
+                    return true;
+                }
+            }
+            
+            // Check for file extension validation
+            if (preg_match('/\.(jpg|jpeg|png|gif|pdf|doc|docx|txt|csv)\b/i', $lines[$i])) {
+                return true;
+            }
+            
+            // Check for size validation
+            if (preg_match('/\$_FILES\[.*?\]\[\'size\'\].*?[<>]/i', $lines[$i])) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Assess file upload vulnerability severity
+     */
+    private static function assessFileUploadSeverity($line, $description)
+    {
+        // Critical severity for executable file uploads
+        if (preg_match('/\.(php|phtml|exe|bat|cmd|scr|vbs|js)/i', $line)) {
+            return SecurityAudit::SEVERITY_CRITICAL;
+        }
+        
+        // High severity for path traversal and direct file operations
+        if (preg_match('/\.\.\/|move_uploaded_file.*?\$_FILES.*?name/i', $line)) {
+            return SecurityAudit::SEVERITY_HIGH;
+        }
+        
+        // High severity for web-accessible uploads
+        if (preg_match('/www|public_html|htdocs/i', $line)) {
+            return SecurityAudit::SEVERITY_HIGH;
+        }
+        
+        // Medium severity for validation issues
+        if (preg_match('/mime.*?type|size.*?validation/i', $description)) {
+            return SecurityAudit::SEVERITY_MEDIUM;
+        }
+        
+        return SecurityAudit::SEVERITY_HIGH; // Default to high for file upload issues
+    }
+
+    /**
+     * Check file upload classes for vulnerabilities
+     */
+    private static function checkFileUploadClasses($line, $line_number)
+    {
+        $vulnerabilities = array();
+        
+        // Check FileUploader class usage
+        if (preg_match('/new\s+FileUploader\(/i', $line)) {
+            // Check if allowedExtensions is properly set
+            if (!preg_match('/allowedExtensions.*?=.*?array\(/i', $line)) {
+                $vulnerabilities[] = array(
+                    'line' => $line_number + 1,
+                    'code' => trim($line),
+                    'description' => 'FileUploader instantiated without allowed extensions',
+                    'severity' => SecurityAudit::SEVERITY_HIGH
+                );
+            }
+        }
+        
+        // Check Uploader class usage
+        if (preg_match('/new\s+Uploader\(/i', $line)) {
+            $vulnerabilities[] = array(
+                'line' => $line_number + 1,
+                'code' => trim($line),
+                'description' => 'Uploader class usage requires validation review',
+                'severity' => SecurityAudit::SEVERITY_MEDIUM
+            );
+        }
+        
+        // Check for direct $_FILES usage without validation
+        if (preg_match('/\$_FILES\[.*?\](?!.*Validate|.*pathinfo|.*getimagesize)/i', $line)) {
+            $vulnerabilities[] = array(
+                'line' => $line_number + 1,
+                'code' => trim($line),
+                'description' => 'Direct $_FILES usage without validation',
+                'severity' => SecurityAudit::SEVERITY_MEDIUM
+            );
+        }
+        
         return $vulnerabilities;
     }
 
