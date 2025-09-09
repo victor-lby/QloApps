@@ -44,4 +44,5 @@ upload/*
 
 # Development files
 .env
-.env.local
+.env.*
+!.env.example

@@ -16,6 +16,8 @@ nbproject
 bower_components
 composer.lock
 
+.env
+
 # Cache, temp and personal files
 
 /cache/**

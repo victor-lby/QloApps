@@ -1,16 +1,14 @@
-version: '3.8'
-
 services:
   qloapps:
     build: .
     container_name: qloapps_web
     ports:
-      - "8080:80"
+      - "80:80"
     volumes:
       - .:/var/www/html
-      - ./docker/uploads:/var/www/html/upload
-      - ./docker/cache:/var/www/html/cache
-      - ./docker/logs:/var/www/html/log
+      - ./upload:/var/www/html/upload
+      - ./cache:/var/www/html/cache
+      - ./log:/var/www/html/log
     environment:
       - APACHE_DOCUMENT_ROOT=/var/www/html
     depends_on:
@@ -23,15 +21,14 @@ services:
     container_name: qloapps_mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: qloapps_root
-      MYSQL_DATABASE: qloapps
-      MYSQL_USER: qloapps_user
-      MYSQL_PASSWORD: qloapps_pass
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-qloapps_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-qloapps}
+      MYSQL_USER: ${MYSQL_USER:-qloapps_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-qloapps_pass}
     ports:
-      - "3306:3306"
+      - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./docker/mysql-init:/docker-entrypoint-initdb.d
     command: --default-authentication-plugin=mysql_native_password
     networks:
       - qloapps_network
@@ -41,12 +38,12 @@ services:
     container_name: qloapps_phpmyadmin
     restart: always
     ports:
-      - "8081:80"
+      - "${PHPMYADMIN_PORT:-8081}:80"
     environment:
       PMA_HOST: mysql
       PMA_PORT: 3306
-      PMA_USER: root
-      PMA_PASSWORD: qloapps_root
+      PMA_USER: ${MYSQL_USER:-qloapps_user}
+      PMA_PASSWORD: ${MYSQL_PASSWORD:-qloapps_pass}
     depends_on:
       - mysql
     networks:
